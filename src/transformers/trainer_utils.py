@@ -62,6 +62,7 @@ class EvalPrediction(NamedTuple):
 class PredictionOutput(NamedTuple):
     predictions: np.ndarray
     label_ids: Optional[np.ndarray]
+    example_ids: Optional[np.ndarray]
     metrics: Optional[Dict[str, float]]
 
 

@@ -612,14 +612,18 @@ class Trainer:
         self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]], optimizer: torch.optim.Optimizer
     ) -> float:
         model.train()
-        for k, v in inputs.items():
+        # avoid exposing the model to example ids
+        # ToDo := maybe just delete the key?
+        model_inputs = {k: v for k, v in inputs if k not in ("example_ids")}
+
+        for k, v in model_inputs.items():
             if isinstance(v, torch.Tensor):
-                inputs[k] = v.to(self.args.device)
+                model_inputs[k] = v.to(self.args.device)
 
         if self.args.past_index >= 0 and self._past is not None:
-            inputs["mems"] = self._past
+            model_inputs["mems"] = self._past
 
-        outputs = model(**inputs)
+        outputs = model(**model_inputs)
         loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
 
         if self.args.past_index >= 0:
@@ -802,6 +806,7 @@ class Trainer:
         eval_losses: List[float] = []
         preds: torch.Tensor = None
         label_ids: torch.Tensor = None
+        example_ids: torch.Tensor = None
         model.eval()
 
         if is_torch_tpu_available():
@@ -812,15 +817,18 @@ class Trainer:
 
         for inputs in tqdm(dataloader, desc=description):
             has_labels = any(inputs.get(k) is not None for k in ["labels", "lm_labels", "masked_lm_labels"])
+            # avoid exposing the model to example ids
+            # ToDo := maybe just delete the key?
+            model_inputs = {k: v for k, v in inputs if k not in ("example_ids")}
 
-            for k, v in inputs.items():
+            for k, v in model_inputs.items():
                 if isinstance(v, torch.Tensor):
-                    inputs[k] = v.to(self.args.device)
+                    model_inputs[k] = v.to(self.args.device)
             if self.args.past_index >= 0:
-                inputs["mems"] = past
+                model_inputs["mems"] = past
 
             with torch.no_grad():
-                outputs = model(**inputs)
+                outputs = model(**model_inputs)
                 if has_labels:
                     step_eval_loss, logits = outputs[:2]
                     eval_losses += [step_eval_loss.mean().item()]
@@ -839,6 +847,11 @@ class Trainer:
                         label_ids = inputs["labels"].detach()
                     else:
                         label_ids = torch.cat((label_ids, inputs["labels"].detach()), dim=0)
+                if inputs.get("example_ids") is not None:
+                    if example_ids is None:
+                        example_ids = inputs["example_ids"].detach()
+                    else:
+                        example_ids = torch.cat((example_ids, inputs["example_ids"].detach()), dim=0)
 
         if self.args.local_rank != -1:
             # In distributed mode, concatenate all results from all nodes:
@@ -846,19 +859,26 @@ class Trainer:
                 preds = self.distributed_concat(preds, num_total_examples=self.num_examples(dataloader))
             if label_ids is not None:
                 label_ids = self.distributed_concat(label_ids, num_total_examples=self.num_examples(dataloader))
+            if example_ids is not None:
+                example_ids = self.distributed_concat(example_ids, num_total_examples=self.num_examples(dataloader))
         elif is_torch_tpu_available():
             # tpu-comment: Get all predictions and labels from all worker shards of eval dataset
             if preds is not None:
                 preds = xm.mesh_reduce("eval_preds", preds, torch.cat)
             if label_ids is not None:
                 label_ids = xm.mesh_reduce("eval_label_ids", label_ids, torch.cat)
+            if example_ids is not None:
+                example_ids = xm.mesh_reduce("eval_example_ids", example_ids, torch.cat)
 
         # Finally, turn the aggregated tensors into numpy arrays.
         if preds is not None:
             preds = preds.cpu().numpy()
         if label_ids is not None:
             label_ids = label_ids.cpu().numpy()
+        if example_ids is not None:
+            example_ids = example_ids.cpu().numpy()
 
+        # ToDo := Expose example_ids to compute metrics?
         if self.compute_metrics is not None and preds is not None and label_ids is not None:
             metrics = self.compute_metrics(EvalPrediction(predictions=preds, label_ids=label_ids))
         else:
@@ -871,7 +891,10 @@ class Trainer:
             if not key.startswith("eval_"):
                 metrics[f"eval_{key}"] = metrics.pop(key)
 
-        return PredictionOutput(predictions=preds, label_ids=label_ids, metrics=metrics)
+        return PredictionOutput(
+            predictions=preds, metrics=metrics,
+            label_ids=label_ids, example_ids=example_ids,
+        )
 
     def distributed_concat(self, tensor: torch.Tensor, num_total_examples: int) -> torch.Tensor:
         assert self.args.local_rank != -1

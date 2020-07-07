@@ -53,10 +53,17 @@ def default_data_collator(features: List[InputDataClass]) -> Dict[str, torch.Ten
             dtype = torch.long if type(first["label_ids"][0]) is int else torch.float
             batch["labels"] = torch.tensor([f["label_ids"] for f in features], dtype=dtype)
 
+    if "example_id" in first and first["example_id"] is not None:
+        if isinstance(first["example_id"], torch.Tensor):
+            batch["example_ids"] = torch.stack([f["example_id"] for f in features])
+        else:
+            dtype = torch.long if type(first["example_id"][0]) is int else torch.float
+            batch["example_ids"] = torch.tensor([f["example_id"] for f in features], dtype=dtype)
+
     # Handling of all other possible keys.
     # Again, we will use the first element to figure out which key/values are not None for this model.
     for k, v in first.items():
-        if k not in ("label", "label_ids") and v is not None and not isinstance(v, str):
+        if k not in ("label", "label_ids", "example_id") and v is not None and not isinstance(v, str):
             if isinstance(v, torch.Tensor):
                 batch[k] = torch.stack([f[k] for f in features])
             else:
@@ -65,6 +72,7 @@ def default_data_collator(features: List[InputDataClass]) -> Dict[str, torch.Ten
     return batch
 
 
+# ToDo := Return { "input_ids", "labels", "example_ids" }
 @dataclass
 class DataCollatorForLanguageModeling:
     """
@@ -136,6 +144,7 @@ class DataCollatorForLanguageModeling:
         return inputs, labels
 
 
+# ToDo := Return { "input_ids", "labels", "example_ids" }
 @dataclass
 class DataCollatorForPermutationLanguageModeling:
     """
