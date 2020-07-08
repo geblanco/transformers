@@ -613,8 +613,7 @@ class Trainer:
     ) -> float:
         model.train()
         # avoid exposing the model to example ids
-        # ToDo := maybe just delete the key?
-        model_inputs = {k: v for k, v in inputs if k not in ("example_ids")}
+        model_inputs = {k: v for k, v in inputs.items() if k not in ("example_ids")}
 
         for k, v in model_inputs.items():
             if isinstance(v, torch.Tensor):
@@ -818,8 +817,7 @@ class Trainer:
         for inputs in tqdm(dataloader, desc=description):
             has_labels = any(inputs.get(k) is not None for k in ["labels", "lm_labels", "masked_lm_labels"])
             # avoid exposing the model to example ids
-            # ToDo := maybe just delete the key?
-            model_inputs = {k: v for k, v in inputs if k not in ("example_ids")}
+            model_inputs = {k: v for k, v in inputs.items() if k not in ("example_ids")}
 
             for k, v in model_inputs.items():
                 if isinstance(v, torch.Tensor):
